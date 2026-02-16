@@ -1,10 +1,3 @@
-{
-  "value_mode": "shift3",
-  "min_value": 0.0,
-  "users": 2035490,
-  "items": 825869,
-  "train_interactions": 117307,
-  "valid_interactions": 205217,
-  "test_interactions": 1437140,
-  "has_timestamp": true
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:2a1e99a98fd0b9b6a7dde649ca06d31c357afbdd171b2bb682103139b5eb8a7a
+size 217

@@ -1,11 +1,3 @@
-{
-  "shape": [
-    2035490,
-    825869
-  ],
-  "nnz": 117307,
-  "density": 6.978206075203746e-08,
-  "value_min": 1.0,
-  "value_max": 2.0,
-  "value_mean": 1.7477644681930542
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:2cf7c16fce2853b3557f86e829d213cb93ecc9aa371cbd5bd6e2920245679fd9
+size 183

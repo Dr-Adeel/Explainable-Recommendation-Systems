@@ -1,5 +1,3 @@
-{
-  "dataset": "ashraq/fashion-product-images-small",
-  "config": "default",
-  "split": "train"
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:f3bf5c747a1e4e733a8cf8b56f00bfdc413db0163d897af674fa57ca409be63a
+size 101

@@ -1,14 +1,6 @@
-# Data files
-data/raw/*.csv
-data/raw/*.json
-data/processed/*.parquet
-data/processed/*.pkl
-data/image_hf/raw/*.json
-data/image_hf/processed/*.parquet
-data/image_hf/processed/*.pkl
-data/image_hf/processed/*.index
-data/image_hf/images/*.jpg
-data/image_hf/images/*.png
+# Data files — entire data/ directory is ignored (available via Drive download)
+data/
+
 
 # Large files
 *.parquet

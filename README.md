@@ -104,7 +104,23 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 2. Lancer l'API FastAPI
+### 2. Récupérer les données
+
+Les données (images, embeddings, modèles pré-entraînés) ne sont pas incluses dans le dépôt Git en raison de leur taille. Téléchargez-les depuis Google Drive :
+
+📥 **[Télécharger le dossier `data/`](https://drive.google.com/drive/folders/1x6aDZpV0AxBL6bcpnEXBL9WA6qOxUFZH?usp=sharing)**
+
+Placez le contenu téléchargé dans le répertoire `data/` à la racine du projet :
+
+```
+ecommerce-reco/
+└── data/
+    ├── amazon/processed_small/   # Items, interactions, matrices ALS
+    ├── embeddings/               # Embeddings multimodaux + index FAISS
+    └── models/                   # Modèle surrogate RF (surrogate_rf.joblib)
+```
+
+### 3. Lancer l'API FastAPI
 
 ```powershell
 python -m uvicorn src.api.amazon_api:app --host 127.0.0.1 --port 8001 --reload
@@ -114,7 +130,7 @@ L'API est disponible sur `http://127.0.0.1:8001`. Vérifier avec :
 ```
 GET http://127.0.0.1:8001/health
 ```
-
+4
 ### 3. Lancer l'interface Streamlit
 
 Dans un **second terminal** :
@@ -127,14 +143,14 @@ L'interface s'ouvre sur `http://localhost:8501` avec 3 onglets :
 - **Hybride** — Recommandation hybride (moteur principal)
 - **Similarité Image** — Recherche par similarité visuelle (CLIP)
 - **Utilisateur ALS** — Recommandations personnalisées par filtrage collaboratif
-
+5
 ### 4. Lancer les tests
 
 ```powershell
 python scripts/test_full_system.py
 ```
 > ✅ 207 tests / 0 échecs
-
+6
 ### 5. Lancer l'évaluation des métriques
 
 ```powershell

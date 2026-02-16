@@ -1,0 +1,74 @@
+# Data files
+data/raw/*.csv
+data/raw/*.json
+data/processed/*.parquet
+data/processed/*.pkl
+data/image_hf/raw/*.json
+data/image_hf/processed/*.parquet
+data/image_hf/processed/*.pkl
+data/image_hf/processed/*.index
+data/image_hf/images/*.jpg
+data/image_hf/images/*.png
+
+# Large files
+*.parquet
+*.pkl
+*.index
+*.csv
+*.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Models and outputs
+outputs/models/*
+outputs/reports/*
+*.h5
+*.model
+
+# Streamlit
+.streamlit/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# MacOS
+.DS_Store

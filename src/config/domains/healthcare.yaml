@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────
+# Domain Configuration — Healthcare
+# ─────────────────────────────────────────────────────────────
+domain: healthcare
+display_name: "Santé — Recommandation de Traitements"
+
+# ── Data paths ──
+data:
+  items_path: "data/healthcare/processed/treatments.parquet"
+  embeddings_path: "data/healthcare/processed/treatment_embeddings.parquet"
+  catalog_path: "data/healthcare/processed/treatment_catalog.parquet"
+  multimodal_embeddings_path: "data/healthcare/embeddings/multimodal_embeddings.parquet"
+  faiss_index_path: "data/healthcare/embeddings/multimodal.faiss"
+  text_embeddings_path: "data/healthcare/embeddings/text_embeddings.parquet"
+  surrogate_path: "data/healthcare/models/surrogate_rf.joblib"
+  feedback_path: "data/healthcare/feedback/feedback.jsonl"
+  images_dir: "data/healthcare/scans"
+  als:
+    model_dirs:
+      - "data/healthcare/processed/als/model"
+    csr_filename: "train_csr.npz"
+
+# ── Column mapping ──
+columns:
+  item_id: "treatment_id"
+  item_raw_id: "treatment_code"
+  user_id: "patient_id"
+  title: "treatment_name"
+  category: "specialty"
+  image_path: "scan_path"
+  rating: "efficacy_score"
+  embedding: "embedding"
+
+# ── Entities (for display & explanation) ──
+entities:
+  item_singular: "traitement"
+  item_plural: "traitements"
+  user_singular: "patient"
+  user_plural: "patients"
+  interaction: "prescription"
+  category_label: "spécialité"
+
+# ── Engine defaults ──
+engines:
+  hybrid_weights:
+    alpha: 0.3   # image similarity (scans)
+    beta: 0.5    # collaborative (patient history)
+    gamma: 0.2   # popularity (evidence-based frequency)
+  als:
+    factors: 64
+    iterations: 20
+    regularization: 0.05
+    alpha_confidence: 20.0
+  clip_model: "openai/clip-vit-base-patch32"
+  text_model: "all-MiniLM-L6-v2"
+  multimodal_fusion:
+    image_weight: 0.4
+    text_weight: 0.6
+
+# ── Explanation templates ──
+explanations:
+  fr:
+    image_dominant: "Traitement avec un profil clinique similaire (similarité imagerie : {pct}%)."
+    image_reinforced_als: "Traitement avec un profil clinique similaire ({pct}%), renforcé par l'historique patient ({als_pct}%)."
+    als_dominant: "Les patients avec un profil similaire ont bénéficié de ce traitement (signal patient : {pct}%)."
+    als_reinforced_image: "Les patients avec un profil similaire ont bénéficié de ce traitement ({pct}%), avec une similarité clinique ({img_pct}%)."
+    popularity_dominant: "Traitement fréquemment prescrit selon les données probantes (fréquence : {pct}%)."
+    fallback: "Recommandé sur la base de signaux cliniques combinés."
+  en:
+    image_dominant: "Treatment with similar clinical profile (imaging similarity: {pct}%)."
+    image_reinforced_als: "Treatment with similar clinical profile ({pct}%), reinforced by patient history ({als_pct}%)."
+    als_dominant: "Patients with similar profiles benefited from this treatment (patient signal: {pct}%)."
+    als_reinforced_image: "Patients with similar profiles benefited from this treatment ({pct}%), with clinical similarity ({img_pct}%)."
+    popularity_dominant: "Frequently prescribed treatment based on evidence (frequency: {pct}%)."
+    fallback: "Recommended based on combined clinical signals."

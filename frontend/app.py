@@ -501,8 +501,8 @@ def main() -> None:
     st.divider()
 
     # ── tabs (Hybrid first) ──
-    tab_hybrid, tab_image, tab_user = st.tabs(
-        ["🔀  Hybride (principal)", "🖼️  Similarité Image", "👤  Utilisateur (ALS)"]
+    tab_hybrid, tab_image, tab_user, tab_global = st.tabs(
+        ["🔀  Hybride (principal)", "🖼️  Similarité Image", "👤  Utilisateur (ALS)", "🌍  Vue Globale"]
     )
 
     # build label map from catalog
@@ -638,6 +638,52 @@ def main() -> None:
                         )
                         st.plotly_chart(fig2, use_container_width=True)
 
+                    # ── Counterfactual analysis ──
+                    st.divider()
+                    st.markdown("#### 🔄 Analyse Contrefactuelle")
+                    st.caption(
+                        "Que se passerait-il si on retirait un signal ? "
+                        "Montre l'impact de chaque signal sur le classement de chaque produit."
+                    )
+                    try:
+                        cf_data = api_get(
+                            "/amazon/counterfactual",
+                            params={
+                                "item_idx": int(item_idx_h),
+                                "k": int(k_h),
+                                "pool": int(pool_h),
+                                "alpha": float(alpha),
+                                "beta": float(beta),
+                                "gamma": float(gamma_val),
+                                "filter_category": bool(filter_cat),
+                            },
+                        )
+                    except Exception:
+                        cf_data = None
+
+                    if cf_data and cf_data.get("counterfactuals"):
+                        for cf in cf_data["counterfactuals"]:
+                            title = cf.get("title", f"Produit {cf['item_idx']}")[:60]
+                            with st.expander(f"#{cf['original_rank']} — {title} (score {cf['original_score']:.3f})"):
+                                st.markdown(f"**💡 {cf['summary_fr']}**")
+                                cols_cf = st.columns(3)
+                                scenarios = cf.get("scenarios", {})
+                                labels_map = {
+                                    "sans_image": ("🖼️ Sans Image", "similarité visuelle"),
+                                    "sans_als": ("👥 Sans ALS", "filtrage collaboratif"),
+                                    "sans_popularite": ("📈 Sans Popularité", "popularité"),
+                                }
+                                for i, (skey, (icon_label, _)) in enumerate(labels_map.items()):
+                                    s = scenarios.get(skey, {})
+                                    delta = s.get("rank_delta", 0)
+                                    with cols_cf[i]:
+                                        if delta > 0:
+                                            st.metric(icon_label, f"Rang {s.get('new_rank', '?')}", f"+{delta} rangs", delta_color="inverse")
+                                        elif delta < 0:
+                                            st.metric(icon_label, f"Rang {s.get('new_rank', '?')}", f"{delta} rangs", delta_color="inverse")
+                                        else:
+                                            st.metric(icon_label, f"Rang {s.get('new_rank', '?')}", "Aucun changement")
+
     # ────────────────── TAB 2 : IMAGE SIMILARITY ───────────────
     with tab_image:
         st.subheader("Similarité Visuelle (CLIP)")
@@ -713,11 +759,123 @@ def main() -> None:
                     st.markdown("### Recommandations")
                     render_simple_grid(data.get("recommendations", []), cols_count=5, score_key="score")
 
+    # ────────────────── TAB 4 : GLOBAL EXPLANATIONS ────────────
+    with tab_global:
+        st.subheader("🌍 Explications Globales du Modèle")
+        st.caption(
+            "Vue d'ensemble du comportement du modèle : importance des features, "
+            "confiance des prédictions, et patterns du dataset."
+        )
+
+        n_samples_g = st.slider("Nombre d'échantillons pour la confiance", 500, 5000, 2000, 100, key="glob_n")
+
+        if st.button("📊  Charger les explications globales", key="glob_run", type="primary"):
+            with st.spinner("Calcul des explications globales…"):
+                try:
+                    gdata = api_get("/amazon/global-explanations", params={"n_samples": int(n_samples_g)})
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+                    gdata = None
+
+                if gdata:
+                    # ── 1. Feature Importance ──
+                    fi = gdata.get("feature_importance")
+                    if fi:
+                        st.markdown("### 📌 Importance Globale des Features")
+                        st.info(fi.get("description_fr", ""))
+
+                        if _HAS_PLOTLY:
+                            labels = fi["feature_names"]
+                            values = [round(v * 100, 2) for v in fi["importances"]]
+                            fig_fi = go.Figure(go.Bar(
+                                x=values, y=labels, orientation="h",
+                                marker_color=["#6366f1", "#f97316", "#10b981"],
+                                text=[f"{v}%" for v in values],
+                                textposition="outside",
+                            ))
+                            fig_fi.update_layout(
+                                xaxis_title="Importance (%)",
+                                yaxis_title="Feature",
+                                height=250,
+                                margin=dict(l=20, r=20, t=10, b=30),
+                            )
+                            st.plotly_chart(fig_fi, use_container_width=True)
+                        else:
+                            for fname, imp in zip(fi["feature_names"], fi["importances"]):
+                                st.write(f"- **{fname}** : {imp * 100:.2f}%")
+
+                    st.divider()
+
+                    # ── 2. Confidence ──
+                    conf = gdata.get("confidence")
+                    if conf:
+                        st.markdown("### 🎯 Distribution de Confiance du Modèle")
+                        st.info(conf.get("description_fr", ""))
+
+                        mc1, mc2, mc3 = st.columns(3)
+                        mc1.metric("Confiance moyenne", f"{conf['mean']:.1%}")
+                        mc2.metric("Confiance médiane", f"{conf['median']:.1%}")
+                        mc3.metric("Écart-type", f"{conf['std']:.4f}")
+
+                        if _HAS_PLOTLY:
+                            bins = conf["histogram_bins"]
+                            counts = conf["histogram_counts"]
+                            bin_labels = [f"{bins[i]:.2f}-{bins[i+1]:.2f}" for i in range(len(counts))]
+                            fig_conf = go.Figure(go.Bar(
+                                x=bin_labels, y=counts,
+                                marker_color="#6366f1",
+                            ))
+                            fig_conf.update_layout(
+                                xaxis_title="Niveau de confiance",
+                                yaxis_title="Nombre de paires",
+                                height=300,
+                                margin=dict(l=20, r=20, t=10, b=50),
+                            )
+                            st.plotly_chart(fig_conf, use_container_width=True)
+
+                    st.divider()
+
+                    # ── 3. Data Patterns ──
+                    dp = gdata.get("data_patterns")
+                    if dp:
+                        st.markdown("### 📊 Patterns du Dataset")
+                        dc1, dc2, dc3, dc4 = st.columns(4)
+                        dc1.metric("Articles", f"{dp['n_items']:,}")
+                        dc2.metric("Utilisateurs", f"{dp['n_users']:,}")
+                        dc3.metric("Interactions", f"{dp['n_interactions']:,}")
+                        dc4.metric("Densité", f"{dp['density_pct']:.3f}%")
+
+                        col_left, col_right = st.columns(2)
+                        with col_left:
+                            st.markdown("#### 🏷️ Top Catégories")
+                            if dp.get("top_categories"):
+                                cat_df = pd.DataFrame(dp["top_categories"])
+                                cat_df.columns = ["Catégorie", "Nombre", "Part (%)"]
+                                st.dataframe(cat_df, use_container_width=True, hide_index=True)
+
+                        with col_right:
+                            st.markdown("#### 🔥 Articles les Plus Populaires")
+                            if dp.get("top_popular_items"):
+                                pop_df = pd.DataFrame(dp["top_popular_items"])
+                                pop_df.columns = ["item_idx", "Titre", "Score Pop."]
+                                st.dataframe(pop_df, use_container_width=True, hide_index=True)
+
+                        # Popularity score distribution
+                        sd = dp.get("score_distribution", {})
+                        if sd:
+                            st.markdown("#### 📈 Distribution des Scores de Popularité")
+                            sd1, sd2, sd3, sd4, sd5 = st.columns(5)
+                            sd1.metric("Moyenne", f"{sd.get('mean', 0):.4f}")
+                            sd2.metric("Médiane", f"{sd.get('median', 0):.4f}")
+                            sd3.metric("Écart-type", f"{sd.get('std', 0):.4f}")
+                            sd4.metric("Min", f"{sd.get('min', 0):.4f}")
+                            sd5.metric("Max", f"{sd.get('max', 0):.4f}")
+
     # ── footer ──
     st.divider()
     st.caption(
         "Explainable Fashion Recommendation System — "
-        "CLIP · ALS · SHAP · FastAPI · Streamlit"
+        "CLIP · ALS · SHAP · Counterfactual · Global · FastAPI · Streamlit"
     )
 
 

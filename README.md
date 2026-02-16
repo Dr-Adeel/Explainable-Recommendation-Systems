@@ -40,12 +40,15 @@ Système de recommandation hybride pour le e-commerce fashion, combinant **visio
 | **ALS** | Filtrage collaboratif (Alternating Least Squares) sur la matrice user-item | Interactions utilisateur |
 | **Popularité** | Baseline — recommande les articles les plus populaires | Comptage d'interactions |
 
-### Explicabilité (SHAP)
+### Explicabilité (3 méthodes)
 
-Un modèle **Random Forest surrogate** est entraîné pour approximer le moteur hybride. Les **valeurs SHAP** décomposent chaque recommandation en contributions explicables :
-- Similarité visuelle (cosine CLIP)
-- Affinité collaborative (ALS dot-product)
-- Popularité de l'article
+Le système offre **3 niveaux d'explicabilité** complémentaires :
+
+| Méthode | Type | Description |
+|---------|------|-------------|
+| **SHAP (local)** | Per-recommendation | Décompose chaque recommandation en contributions (image, ALS, popularité) via un modèle Random Forest surrogate |
+| **Counterfactual** | Contrastif | "Si on retirait le signal X, ce produit passerait du rang 2 au rang 8" — analyse de sensibilité par signal |
+| **Global Explanations** | Vue d'ensemble | Importance globale des features, distribution de confiance du modèle, patterns du dataset |
 
 ---
 
@@ -54,16 +57,26 @@ Un modèle **Random Forest surrogate** est entraîné pour approximer le moteur 
 ```
 ecommerce-reco/
 ├── frontend/
-│   └── app.py                  # Interface Streamlit (3 onglets)
+│   └── app.py                  # Interface Streamlit (4 onglets)
 ├── src/
 │   ├── api/
 │   │   └── amazon_api.py       # API FastAPI — tous les endpoints
+│   ├── config/
+│   │   ├── domain_adapter.py   # Classe abstraite DomainAdapter
+│   │   ├── yaml_adapter.py     # Implémentation YAML du DomainAdapter
+│   │   ├── settings.py         # Chargeur de configuration (singleton)
+│   │   └── domains/            # Fichiers YAML par domaine
+│   │       ├── ecommerce.yaml  # E-Commerce Fashion (défaut)
+│   │       ├── healthcare.yaml # Santé
+│   │       └── education.yaml  # Éducation
 │   ├── recommenders/
 │   │   ├── hybrid.py           # Moteur hybride (fusion des scores)
 │   │   └── multimodal.py       # Fusion d'embeddings image + texte
 │   ├── encoders/               # Encodeurs CLIP & texte
 │   ├── explain/
-│   │   └── shap_surrogate.py   # Entraînement du surrogate RF + SHAP
+│   │   ├── shap_surrogate.py   # Entraînement du surrogate RF + SHAP
+│   │   ├── counterfactual.py   # Raisonnement contrefactuel
+│   │   └── global_explain.py   # Explications globales (importance, confiance, patterns)
 │   ├── models/                 # Modèle ALS (implicit)
 │   └── utils/                  # Utilitaires (images, paths, etc.)
 ├── scripts/
@@ -77,6 +90,92 @@ ecommerce-reco/
 │   └── models/                 # Modèle surrogate RF (surrogate_rf.joblib)
 ├── reports/                    # Rapports d'évaluation (CSV)
 └── requirements.txt
+```
+
+---
+
+## 🌐 Architecture Domain-Agnostic
+
+Le système est conçu avec une **couche d'abstraction de domaine** permettant de réutiliser les mêmes moteurs de recommandation et d'explicabilité sur **n'importe quel domaine applicatif** — sans modifier le code source.
+
+### Principe
+
+Un **DomainAdapter** abstrait sert de contrat entre le code générique (moteurs, API, frontend) et un fichier de configuration YAML spécifique au domaine :
+
+```
+┌────────────────────────────┐
+│  Code applicatif (API,     │
+│  moteurs, explicabilité)   │
+└────────────┬───────────────┘
+             │  appelle
+┌────────────▼───────────────┐
+│   DomainAdapter (abstrait) │
+│   - load_items()           │
+│   - get_column_map()       │
+│   - entity_labels()        │
+│   - explain_reason()       │
+│   - get_paths()            │
+│   - get_engine_defaults()  │
+└────────────┬───────────────┘
+             │  implémenté par
+┌────────────▼───────────────┐
+│  YAMLDomainAdapter         │
+│  lit src/config/domains/   │
+│     └── <domaine>.yaml     │
+└────────────────────────────┘
+```
+
+### Mapping des concepts par domaine
+
+| Concept générique | E-Commerce (défaut) | Santé | Éducation |
+|-------------------|---------------------|-------|-----------|
+| **Utilisateur** | Acheteur (`user_id`) | Patient (`patient_id`) | Étudiant (`student_id`) |
+| **Item** | Produit (`item_idx`) | Traitement (`treatment_id`) | Cours (`course_id`) |
+| **Interaction** | Achat / note | Prescription / efficacité | Inscription / complétion |
+| **Catégorie** | Sous-catégorie mode | Spécialité médicale | Matière |
+| **Explication** | "Recommandé car visuellement similaire..." | "Suggéré car efficace pour des profils similaires..." | "Proposé car des étudiants similaires ont suivi..." |
+
+### Changer de domaine
+
+Le domaine actif est contrôlé par la variable d'environnement `RECO_DOMAIN` :
+
+```powershell
+# Utiliser le domaine e-commerce (défaut)
+$env:RECO_DOMAIN = "ecommerce"
+python -m uvicorn src.api.amazon_api:app --port 8001
+
+# Utiliser le domaine santé
+$env:RECO_DOMAIN = "healthcare"
+python -m uvicorn src.api.amazon_api:app --port 8001
+```
+
+### Ajouter un nouveau domaine
+
+1. Créer `src/config/domains/<nouveau_domaine>.yaml` en suivant le schéma existant (voir `ecommerce.yaml`)
+2. Placer les données dans les chemins déclarés dans le YAML
+3. Lancer avec `RECO_DOMAIN=<nouveau_domaine>`
+
+### Fichiers de configuration disponibles
+
+| Fichier | Domaine | Description |
+|---------|---------|-------------|
+| `src/config/domains/ecommerce.yaml` | E-Commerce Fashion | Configuration par défaut — Amazon Fashion |
+| `src/config/domains/healthcare.yaml` | Santé | Recommandation de traitements médicaux |
+| `src/config/domains/education.yaml` | Éducation | Recommandation de cours en ligne |
+
+### Endpoint `/domain`
+
+L'API expose un endpoint `GET /domain` qui retourne la configuration active :
+
+```json
+{
+  "active_domain": "ecommerce",
+  "display_name": "E-Commerce Fashion",
+  "entities": {"user": "Acheteur", "item": "Produit", "interaction": "Achat"},
+  "column_mapping": {"item_id": "item_idx", "title": "title", "category": "main_category"},
+  "engine_defaults": {"default_engine": "hybrid", "hybrid_weights": {"alpha": 0.5, "beta": 0.4, "gamma": 0.1}},
+  "available_domains": ["ecommerce", "education", "healthcare"]
+}
 ```
 
 ---
@@ -224,7 +323,10 @@ python scripts/evaluate_all_metrics.py --split test
 | `/amazon/recommend-user` | GET | Recommandations ALS personnalisées |
 | `/amazon/recommend-hybrid` | GET | Recommandations hybrides (image + ALS + popularité) |
 | `/amazon/explain-recommendation` | GET | Explication SHAP d'une recommandation |
+| `/amazon/counterfactual` | GET | Analyse contrefactuelle (impact de chaque signal) |
+| `/amazon/global-explanations` | GET | Explications globales (importance, confiance, patterns) |
 | `/amazon/feedback` | POST | Collecte de feedback utilisateur |
+| `/domain` | GET | Configuration du domaine actif |
 
 ---
 

@@ -16,14 +16,22 @@ import json
 from pathlib import Path as _Path
 from typing import Any
 
+# ── Domain-agnostic configuration ──
+from src.config.settings import get_adapter, get_config
 
-DATA_DIR = Path("data/amazon/processed")
+_domain_cfg = get_config()
+_adapter = get_adapter()
+_paths = _adapter.get_paths()
 
-ITEMS_PATH = DATA_DIR / "items_with_images.parquet"
-EMB_PATH = DATA_DIR / "amazon_image_embeddings.parquet"
-CAT_PATH = DATA_DIR / "amazon_clip_catalog.parquet"
+DATA_DIR = _paths["items_path"].parent
+ITEMS_PATH = _paths["items_path"]
+EMB_PATH = _paths["embeddings_path"]
+CAT_PATH = _paths["catalog_path"]
 
-app = FastAPI(title="Amazon Fashion API", version="1.1")
+app = FastAPI(
+    title=f"Recommendation API — {_adapter.display_name}",
+    version="2.0",
+)
 
 
 _items: Optional[pd.DataFrame] = None
@@ -51,11 +59,11 @@ _multimodal_nn: Optional[NearestNeighbors] = None
 _multimodal_ids: Optional[List[int]] = None
 _multimodal_idx_map: Optional[Dict[int, int]] = None
 _faiss_index = None
-_multimodal_index_path = Path("data/embeddings/multimodal_embeddings.parquet")
-_faiss_index_path = Path("data/embeddings/multimodal.faiss")
+_multimodal_index_path = _paths.get("multimodal_embeddings_path", Path("data/embeddings/multimodal_embeddings.parquet"))
+_faiss_index_path = _paths.get("faiss_index_path", Path("data/embeddings/multimodal.faiss"))
 
 # surrogate path
-_surrogate_path = Path("data/models/surrogate_rf.joblib")
+_surrogate_path = _paths.get("surrogate_path", Path("data/models/surrogate_rf.joblib"))
 _surrogate_model: Any = None
 
 # Lazy CLIP model for on-demand embedding computation
@@ -250,12 +258,15 @@ def load_artifacts() -> None:
         _item_to_title = dict(zip(df["item_idx"], df["title"]))
         _item_to_path = dict(zip(df["item_idx"], df["image_path"]))
 
-    # Try loading ALS artifacts from either processed or processed_small
+    # Try loading ALS artifacts from domain config (or fallback to defaults)
     # Expected layout: <processed_dir>/als/model/{user_factors.npy,item_factors.npy}
-    candidates = [
-        DATA_DIR / "als" / "model",
-        DATA_DIR.parent / "processed_small" / "als" / "model",
-    ]
+    _als_cfg = _adapter.get_als_config()
+    candidates = _als_cfg.get("model_dirs", [])
+    if not candidates:
+        candidates = [
+            DATA_DIR / "als" / "model",
+            DATA_DIR.parent / "processed_small" / "als" / "model",
+        ]
 
     for cand in candidates:
         try:
@@ -526,21 +537,32 @@ def _compose_reason(parts: Dict[str, float]) -> str:
 
 
 def _compose_reason_fr(parts: Dict[str, float]) -> str:
-    """Compose a short French explanation from contribution shares.
+    """Compose a domain-aware explanation from contribution shares.
+    Uses the active DomainAdapter to generate contextualised text.
     `parts` are shares in [0,1] for keys: 'image', 'user', 'popularity'.
     """
     if not parts:
         return "Aucune explication disponible."
-    top = max(parts.items(), key=lambda x: x[1])
-    label, val = top
-    pct = int(round(val * 100))
-    if label == "image":
-        return f"Produit visuellement similaire (la similarité d'image contribue à hauteur de {pct}% à la recommandation)."
-    if label == "user":
-        return f"Les utilisateurs qui ont acheté ce produit ont aussi acheté celui-ci (le signal utilisateur contribue à hauteur de {pct}%)."
-    if label == "popularity":
-        return f"Article populaire (la popularité contribue à hauteur de {pct}% à la recommandation)."
-    return "Recommandé en combinant plusieurs signaux."
+    # Convert parts {image/user/popularity} → {image/als/pop} for adapter
+    shares = {
+        "image": float(parts.get("image", 0)) * 100,
+        "als":   float(parts.get("user", 0)) * 100,
+        "pop":   float(parts.get("popularity", 0)) * 100,
+    }
+    try:
+        return _adapter.explain_reason(shares, lang="fr")
+    except Exception:
+        # fallback to hardcoded if adapter fails
+        top = max(parts.items(), key=lambda x: x[1])
+        label, val = top
+        pct = int(round(val * 100))
+        if label == "image":
+            return f"Produit visuellement similaire (la similarité d'image contribue à hauteur de {pct}% à la recommandation)."
+        if label == "user":
+            return f"Les utilisateurs qui ont acheté ce produit ont aussi acheté celui-ci (le signal utilisateur contribue à hauteur de {pct}%)."
+        if label == "popularity":
+            return f"Article populaire (la popularité contribue à hauteur de {pct}% à la recommandation)."
+        return "Recommandé en combinant plusieurs signaux."
 @app.get("/amazon/similar-items")
 def similar_items(
     item_idx: int = Query(..., ge=0),
@@ -949,6 +971,217 @@ def explain_recommendation(
     return {'query_item': int(item_idx), 'k': int(k), 'explanations': explanations}
 
 
+# ══════════════════════════════════════════════════════════════════
+# Counterfactual Reasoning
+# ══════════════════════════════════════════════════════════════════
+
+@app.get("/amazon/counterfactual")
+def counterfactual(
+    item_idx: int = Query(..., ge=0),
+    k: int = Query(10, ge=1, le=50),
+    pool: int = Query(500, ge=10, le=5000),
+    alpha: float = Query(0.5, ge=0.0, le=10.0),
+    beta: float = Query(0.4, ge=0.0, le=10.0),
+    gamma: float = Query(0.1, ge=0.0, le=10.0),
+    filter_category: bool = Query(True),
+):
+    """Counterfactual analysis: 'If we removed signal X, how would the ranking change?'
+
+    For each top-k candidate, shows the rank shift when each signal
+    (image/ALS/popularity) is removed.
+    """
+    from src.explain.counterfactual import compute_counterfactuals
+
+    _require_als_ready()
+
+    # ── Build candidate pool (same logic as recommend_hybrid) ──
+    cand_item_ids = []
+    if ensure_clip_embedding(item_idx) and _idx_by_item is not None and item_idx in _idx_by_item:
+        q_index = _idx_by_item[item_idx]
+        pool_idxs = _neighbors_pool(q_index, pool=pool)
+        cand_item_ids = [_item_ids[i] for i in pool_idxs]
+        if item_idx not in cand_item_ids:
+            cand_item_ids = [item_idx] + cand_item_ids
+    else:
+        if _als_pop_scores is not None:
+            cand_item_ids = list(np.argsort(-_als_pop_scores)[:pool].astype(int).tolist())
+        else:
+            raise HTTPException(status_code=404, detail="Cannot build candidate pool")
+
+    if filter_category:
+        q_cat = _item_to_cat.get(item_idx, "")
+        if q_cat:
+            same = [iid for iid in cand_item_ids if _item_to_cat.get(iid, "") == q_cat]
+            other = [iid for iid in cand_item_ids if _item_to_cat.get(iid, "") != q_cat]
+            cand_item_ids = (same + other)[:max(pool, k)]
+
+    cand = np.array(cand_item_ids, dtype=int)
+
+    # ── Compute normalised signal arrays ──
+    img_scores = np.zeros(cand.shape[0], dtype=np.float32)
+    if ensure_clip_embedding(item_idx) and _idx_by_item is not None and item_idx in _idx_by_item:
+        qidx = _idx_by_item[item_idx]
+        qvec = _X[qidx].astype(np.float32)
+        for i, iid in enumerate(cand.tolist()):
+            if iid not in _idx_by_item:
+                ensure_clip_embedding(int(iid))
+        Xcand_idx = [_idx_by_item[iid] for iid in cand if iid in _idx_by_item]
+        if Xcand_idx:
+            Xcand = _X[Xcand_idx].astype(np.float32)
+            qnorm = np.linalg.norm(qvec) + 1e-12
+            norms = np.linalg.norm(Xcand, axis=1) + 1e-12
+            sims = (Xcand @ qvec) / (norms * qnorm)
+            mask = [iid in _idx_by_item for iid in cand]
+            img_scores[np.array(mask)] = sims
+
+    als_scores = np.zeros(cand.shape[0], dtype=np.float32)
+    try:
+        q_if = _als_item_factors[item_idx]
+        itf = _als_item_factors[cand]
+        als_scores = (itf.astype(np.float32) @ q_if.astype(np.float32))
+    except Exception:
+        pass
+
+    pop_scores_arr = np.zeros(cand.shape[0], dtype=np.float32)
+    if _als_pop_scores is not None:
+        pop_scores_arr = _als_pop_scores[cand]
+
+    img_n = _normalize_scores(img_scores)
+    als_n = _normalize_scores(als_scores)
+    pop_n = _normalize_scores(pop_scores_arr)
+
+    # ── Run counterfactual engine ──
+    results = compute_counterfactuals(
+        img_scores=img_n,
+        als_scores=als_n,
+        pop_scores=pop_n,
+        alpha=float(alpha),
+        beta=float(beta),
+        gamma=float(gamma),
+        candidate_ids=cand,
+        query_item=item_idx,
+        top_k=k,
+    )
+
+    # ── Serialise ──
+    output = []
+    for r in results:
+        scenarios = {}
+        for skey, s in r.scenarios.items():
+            scenarios[skey] = {
+                "signal_removed": s.signal_removed,
+                "new_rank": s.new_rank,
+                "rank_delta": s.rank_delta,
+                "new_score": s.new_score,
+                "score_delta": s.score_delta,
+            }
+        meta = {}
+        row = _items.loc[_items["item_idx"] == r.item_idx]
+        if not row.empty:
+            rr = row.iloc[0]
+            meta = {
+                "title": str(rr.get("title", "")),
+                "main_category": str(rr.get("main_category", "")),
+            }
+        output.append({
+            "item_idx": r.item_idx,
+            "original_rank": r.original_rank,
+            "original_score": r.original_score,
+            "scenarios": scenarios,
+            "summary_fr": r.summary_fr,
+            "summary_en": r.summary_en,
+            **meta,
+        })
+
+    return {
+        "query_item": int(item_idx),
+        "k": int(k),
+        "alpha": float(alpha),
+        "beta": float(beta),
+        "gamma": float(gamma),
+        "counterfactuals": output,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════
+# Global Explanations
+# ══════════════════════════════════════════════════════════════════
+
+@app.get("/amazon/global-explanations")
+def global_explanations(n_samples: int = Query(2000, ge=100, le=10000)):
+    """Global model explanations: feature importance, confidence distribution, data patterns.
+
+    Provides a bird's-eye view of how the recommendation model behaves overall,
+    complementing the per-recommendation local SHAP explanations.
+    """
+    from src.explain.global_explain import (
+        compute_feature_importance,
+        compute_confidence,
+        compute_data_patterns,
+        build_sample_features,
+    )
+
+    result: Dict[str, Any] = {}
+
+    # 1. Feature importance
+    if _surrogate_model is not None:
+        fi = compute_feature_importance(_surrogate_model)
+        if fi:
+            result["feature_importance"] = {
+                "feature_names": fi.feature_names,
+                "importances": [round(v, 6) for v in fi.importances],
+                "description_fr": fi.description_fr,
+                "description_en": fi.description_en,
+            }
+
+    # 2. Model confidence
+    if _surrogate_model is not None and _multimodal_X is not None:
+        X_sample = build_sample_features(
+            multimodal_X=_multimodal_X,
+            multimodal_ids=_multimodal_ids,
+            als_item_factors=_als_item_factors,
+            pop_scores=_als_pop_scores,
+            n_samples=n_samples,
+        )
+        if X_sample.shape[0] > 0:
+            conf = compute_confidence(_surrogate_model, X_sample)
+            if conf:
+                result["confidence"] = {
+                    "mean": conf.mean_confidence,
+                    "median": conf.median_confidence,
+                    "std": conf.std_confidence,
+                    "histogram_bins": conf.histogram_bins,
+                    "histogram_counts": conf.histogram_counts,
+                    "n_samples": conf.n_samples,
+                    "description_fr": conf.description_fr,
+                    "description_en": conf.description_en,
+                }
+
+    # 3. Data patterns
+    if _items is not None:
+        n_users = int(_als_user_factors.shape[0]) if _als_user_factors is not None else 0
+        n_interactions = 0
+        if _als_seen_by_user is not None:
+            n_interactions = sum(len(v) for v in _als_seen_by_user.values())
+        dp = compute_data_patterns(
+            items_df=_items,
+            pop_scores=_als_pop_scores,
+            n_users=n_users,
+            n_interactions=n_interactions,
+        )
+        result["data_patterns"] = {
+            "n_items": dp.n_items,
+            "n_users": dp.n_users,
+            "n_interactions": dp.n_interactions,
+            "density_pct": dp.density_pct,
+            "top_categories": dp.top_categories,
+            "top_popular_items": dp.top_popular_items,
+            "score_distribution": dp.score_distribution,
+        }
+
+    return result
+
+
 class FeedbackModel(BaseModel):
     query_item: int
     candidate_item: int
@@ -959,9 +1192,10 @@ class FeedbackModel(BaseModel):
 @app.post("/amazon/feedback")
 def feedback(feedback: FeedbackModel):
     """Receive simple user feedback about a candidate recommendation and append to disk as JSONL."""
-    out_dir = Path("data/feedback")
+    _fb_path = _paths.get("feedback_path", Path("data/feedback/feedback.jsonl"))
+    out_dir = _fb_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "feedback.jsonl"
+    out_path = _fb_path
 
     rec = {
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
@@ -978,3 +1212,17 @@ def feedback(feedback: FeedbackModel):
         raise HTTPException(status_code=500, detail=f"Failed to write feedback: {e}")
 
     return {"status": "ok", "written": True}
+
+
+@app.get("/domain")
+def domain_info():
+    """Return information about the active domain configuration."""
+    from src.config.settings import list_available_domains
+    return {
+        "active_domain": _adapter.domain_name,
+        "display_name": _adapter.display_name,
+        "entities": _adapter.entity_labels(),
+        "column_mapping": _adapter.get_column_map(),
+        "engine_defaults": _adapter.get_engine_defaults(),
+        "available_domains": list_available_domains(),
+    }

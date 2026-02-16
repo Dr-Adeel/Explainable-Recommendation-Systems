@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────
+# Domain Configuration — Education
+# ─────────────────────────────────────────────────────────────
+domain: education
+display_name: "Éducation — Recommandation de Parcours"
+
+# ── Data paths ──
+data:
+  items_path: "data/education/processed/courses.parquet"
+  embeddings_path: "data/education/processed/course_embeddings.parquet"
+  catalog_path: "data/education/processed/course_catalog.parquet"
+  multimodal_embeddings_path: "data/education/embeddings/multimodal_embeddings.parquet"
+  faiss_index_path: "data/education/embeddings/multimodal.faiss"
+  text_embeddings_path: "data/education/embeddings/text_embeddings.parquet"
+  surrogate_path: "data/education/models/surrogate_rf.joblib"
+  feedback_path: "data/education/feedback/feedback.jsonl"
+  images_dir: "data/education/thumbnails"
+  als:
+    model_dirs:
+      - "data/education/processed/als/model"
+    csr_filename: "train_csr.npz"
+
+# ── Column mapping ──
+columns:
+  item_id: "course_id"
+  item_raw_id: "course_code"
+  user_id: "student_id"
+  title: "course_name"
+  category: "subject"
+  image_path: "thumbnail_path"
+  rating: "grade"
+  embedding: "embedding"
+
+# ── Entities (for display & explanation) ──
+entities:
+  item_singular: "cours"
+  item_plural: "cours"
+  user_singular: "étudiant"
+  user_plural: "étudiants"
+  interaction: "inscription"
+  category_label: "matière"
+
+# ── Engine defaults ──
+engines:
+  hybrid_weights:
+    alpha: 0.2   # image similarity (thumbnails)
+    beta: 0.6    # collaborative (student history)
+    gamma: 0.2   # popularity (enrollment count)
+  als:
+    factors: 64
+    iterations: 20
+    regularization: 0.05
+    alpha_confidence: 20.0
+  clip_model: "openai/clip-vit-base-patch32"
+  text_model: "all-MiniLM-L6-v2"
+  multimodal_fusion:
+    image_weight: 0.3
+    text_weight: 0.7
+
+# ── Explanation templates ──
+explanations:
+  fr:
+    image_dominant: "Cours avec un contenu visuel similaire (similarité visuelle : {pct}%)."
+    image_reinforced_als: "Cours avec un contenu visuel similaire ({pct}%), renforcé par les parcours d'étudiants similaires ({als_pct}%)."
+    als_dominant: "Les étudiants avec un parcours similaire ont suivi ce cours (signal parcours : {pct}%)."
+    als_reinforced_image: "Les étudiants avec un parcours similaire ont suivi ce cours ({pct}%), avec une similarité de contenu ({img_pct}%)."
+    popularity_dominant: "Cours populaire auprès des étudiants (inscriptions : {pct}%)."
+    fallback: "Recommandé sur la base de signaux pédagogiques combinés."
+  en:
+    image_dominant: "Course with similar visual content (visual similarity: {pct}%)."
+    image_reinforced_als: "Course with similar visual content ({pct}%), reinforced by similar student paths ({als_pct}%)."
+    als_dominant: "Students with similar paths took this course (path signal: {pct}%)."
+    als_reinforced_image: "Students with similar paths took this course ({pct}%), with content similarity ({img_pct}%)."
+    popularity_dominant: "Popular course among students (enrollments: {pct}%)."
+    fallback: "Recommended based on combined pedagogical signals."

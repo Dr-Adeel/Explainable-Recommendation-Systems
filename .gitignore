@@ -1,13 +1,10 @@
-# Data files — entire data/ directory is ignored (available via Drive download)
-data/
 
-
-# Large files
-*.parquet
-*.pkl
-*.index
-*.csv
-*.json
+# Large files (commented for data-included branch)
+# *.parquet
+# *.pkl
+# *.index
+# *.csv
+# *.json
 
 # Python cache
 __pycache__/

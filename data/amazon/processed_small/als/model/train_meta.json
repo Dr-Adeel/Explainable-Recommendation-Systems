@@ -1,0 +1,14 @@
+{
+  "processed_dir": "data\\amazon\\processed_small",
+  "csr_path": "data\\amazon\\processed_small\\als\\train_csr.npz",
+  "shape_users_items": [
+    5000,
+    6441
+  ],
+  "nnz": 18266,
+  "alpha": 20.0,
+  "factors": 64,
+  "iterations": 20,
+  "regularization": 0.05,
+  "random_state": 42
+}

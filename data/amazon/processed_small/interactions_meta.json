@@ -1,0 +1,8 @@
+{
+  "users": 5000,
+  "items": 6441,
+  "train_interactions": 18266,
+  "valid_interactions": 1062,
+  "test_interactions": 831,
+  "has_timestamp": true
+}

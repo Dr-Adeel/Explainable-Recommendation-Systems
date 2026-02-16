@@ -1,0 +1,5 @@
+{
+  "dataset": "ashraq/fashion-product-images-small",
+  "config": "default",
+  "split": "train"
+}

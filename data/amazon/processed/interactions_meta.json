@@ -1,0 +1,10 @@
+{
+  "value_mode": "shift3",
+  "min_value": 0.0,
+  "users": 2035490,
+  "items": 825869,
+  "train_interactions": 117307,
+  "valid_interactions": 205217,
+  "test_interactions": 1437140,
+  "has_timestamp": true
+}

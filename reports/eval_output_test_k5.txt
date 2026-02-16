@@ -1,0 +1,11 @@
+Evaluated users: 665
+Split: test | K=5 | relevance_threshold>=4.0
+
+ALS
+Precision@5: 0.0069
+Recall@5:    0.0346
+
+Popularity baseline
+Precision@5: 0.0042
+Recall@5:    0.0211
+
